@@ -618,6 +618,29 @@ class ChallengeTask:
 
         return self._run_helper_cmd(cmd, env_helper=env_helper)
 
+    @staticmethod
+    def _detect_dotnet_sdk_version(source_dir: Path) -> str:
+        """Detect the required .NET SDK version from project files.
+
+        Scans .csproj files for TargetFramework and returns the appropriate
+        SDK Docker image tag. Falls back to '8.0' if no framework is detected.
+        """
+        import re as _re
+
+        max_version = 8  # default
+        for csproj in source_dir.rglob("*.csproj"):
+            try:
+                content = csproj.read_text(encoding="utf-8", errors="ignore")
+                matches = _re.findall(r"<TargetFramework>net(\d+)\.(\d+)</TargetFramework>", content)
+                for major, _minor in matches:
+                    ver = int(major)
+                    if ver > max_version:
+                        max_version = ver
+            except OSError:
+                continue
+
+        return f"{max_version}.0"
+
     @read_write_decorator
     def build_fuzzers_csharp(
         self,
@@ -629,6 +652,11 @@ class ChallengeTask:
 
         Bypasses OSS-Fuzz helper.py since it doesn't support C#.
         Uses a custom Docker container with .NET SDK and SharpFuzz tooling.
+
+        Supports two modes:
+        1. Simple: Source root has a single .csproj → build it directly.
+        2. Multi-project: Source has a FuzzTargets/ directory with individual
+           harness .csproj files → build each one as a separate fuzz target.
         """
         logger.info(
             "Building C# fuzzers for project %s | engine=%s | sanitizer=%s",
@@ -645,66 +673,131 @@ class ChallengeTask:
         build_out_dir = self.task_dir / "build" / "out" / self.project_name
         build_out_dir.mkdir(parents=True, exist_ok=True)
 
+        # Detect .NET SDK version from project files
+        sdk_version = self._detect_dotnet_sdk_version(source_dir)
+
         # Build inside a Docker container with .NET SDK + SharpFuzz
         container_name = f"buttercup-csharp-build-{uuid.uuid4().hex[:12]}"
-        docker_image = "mcr.microsoft.com/dotnet/sdk:8.0"
+        docker_image = f"mcr.microsoft.com/dotnet/sdk:{sdk_version}"
 
-        # The build script:
-        # 1. Install SharpFuzz CLI tool
-        # 2. Build libfuzzer-dotnet from source
-        # 3. Build the C# project
+        # The build script handles both simple and multi-project modes:
+        # 1. Install SharpFuzz CLI tool + libfuzzer-dotnet
+        # 2. Detect FuzzTargets/ directory for multi-project repos
+        # 3. Build the harness project(s)
         # 4. Instrument assemblies with SharpFuzz
-        # 5. Copy libfuzzer-dotnet + instrumented DLLs to /out/
+        # 5. Create fuzz targets in /out/
         build_script = """#!/bin/bash
 set -e
 
 # Install build dependencies for libfuzzer-dotnet
-apt-get update && apt-get install -y --no-install-recommends clang git ca-certificates 2>/dev/null
+# Use clang-17 + libclang-rt-17-dev because the default clang may not have matching compiler-rt
+apt-get update && apt-get install -y --no-install-recommends clang-17 libclang-rt-17-dev git ca-certificates 2>/dev/null
 
 # Build libfuzzer-dotnet
 if [ ! -f /usr/local/bin/libfuzzer-dotnet ]; then
     git clone --depth 1 https://github.com/Metalnem/libfuzzer-dotnet.git /tmp/libfuzzer-dotnet
     cd /tmp/libfuzzer-dotnet
-    clang -fsanitize=fuzzer -lstdc++ libfuzzer-dotnet.cc -o /usr/local/bin/libfuzzer-dotnet
+    clang-17 -fsanitize=fuzzer -lstdc++ libfuzzer-dotnet.cc -o /usr/local/bin/libfuzzer-dotnet
 fi
+
+# Set NuGet package cache to writable location (source may be read-only mount)
+export NUGET_PACKAGES=/tmp/nuget-packages
 
 # Install SharpFuzz CLI
 dotnet tool install --global SharpFuzz.CommandLine 2>/dev/null || true
 export PATH="$PATH:/root/.dotnet/tools"
 
-# Build the C# project
-cd /src
-dotnet publish -c Release -o /build 2>&1 || { echo "dotnet publish failed"; exit 1; }
-
-# Instrument all built DLLs with SharpFuzz (skip system DLLs)
-for dll in /build/*.dll; do
-    basename=$(basename "$dll" .dll)
-    # Skip common .NET system DLLs
-    case "$basename" in
-        System.*|Microsoft.*|mscorlib|netstandard) continue ;;
-    esac
-    sharpfuzz "$dll" 2>/dev/null || true
-done
-
-# For each harness DLL, create a fuzz target by copying libfuzzer-dotnet
 mkdir -p /out
-for dll in /build/*.dll; do
-    basename=$(basename "$dll" .dll)
-    # Copy libfuzzer-dotnet as the harness binary name
-    cp /usr/local/bin/libfuzzer-dotnet "/out/$basename"
-    # Copy the DLL and runtime config alongside
-    cp "$dll" "/out/${basename}.dll"
-    if [ -f "/build/${basename}.runtimeconfig.json" ]; then
-        cp "/build/${basename}.runtimeconfig.json" "/out/${basename}.runtimeconfig.json"
-    fi
-    if [ -f "/build/${basename}.deps.json" ]; then
-        cp "/build/${basename}.deps.json" "/out/${basename}.deps.json"
-    fi
-done
 
-# Copy all dependency DLLs to /out/ for runtime resolution
-cp /build/*.dll /out/ 2>/dev/null || true
-cp /build/*.json /out/ 2>/dev/null || true
+# Copy source to writable location (source is mounted read-only)
+# Exclude large non-essential directories to speed up the copy
+echo "Copying source to writable location..."
+mkdir -p /workspace
+cd /src
+find . -maxdepth 1 -mindepth 1 \
+    ! -name "node_modules" ! -name ".git" ! -name "ClientApp" \
+    ! -name "dist" ! -name ".angular" ! -name ".nx" \
+    -exec cp -a {} /workspace/ \;
+cd /workspace
+
+# --- Detect build mode ---
+if [ -d "/workspace/FuzzTargets" ]; then
+    echo "=== Multi-project mode: building FuzzTargets/ ==="
+
+    # Find all .csproj files in FuzzTargets/
+    HARNESS_PROJECTS=$(find /workspace/FuzzTargets -name "*.csproj" -maxdepth 2)
+
+    if [ -z "$HARNESS_PROJECTS" ]; then
+        echo "ERROR: FuzzTargets/ directory exists but contains no .csproj files"
+        exit 1
+    fi
+
+    for proj in $HARNESS_PROJECTS; do
+        proj_name=$(basename "$(dirname "$proj")")
+        if [ "$proj_name" = "FuzzTargets" ]; then
+            # .csproj is directly in FuzzTargets/, use filename
+            proj_name=$(basename "$proj" .csproj)
+        fi
+        echo "--- Building harness: $proj_name ---"
+
+        build_dir="/build/$proj_name"
+        dotnet publish "$proj" -c Release -o "$build_dir" 2>&1 || {
+            echo "WARNING: Failed to build $proj_name, skipping"
+            continue
+        }
+
+        # Instrument target DLLs (skip system DLLs)
+        for dll in "$build_dir"/*.dll; do
+            bn=$(basename "$dll" .dll)
+            case "$bn" in
+                System.*|Microsoft.*|mscorlib|netstandard|SharpFuzz*) continue ;;
+            esac
+            sharpfuzz "$dll" 2>/dev/null || true
+        done
+
+        # Create the fuzz target
+        cp /usr/local/bin/libfuzzer-dotnet "/out/$proj_name"
+        cp "$build_dir"/*.dll /out/ 2>/dev/null || true
+        cp "$build_dir"/*.json /out/ 2>/dev/null || true
+        if [ -f "$build_dir/${proj_name}.runtimeconfig.json" ]; then
+            cp "$build_dir/${proj_name}.runtimeconfig.json" "/out/${proj_name}.runtimeconfig.json"
+        fi
+        if [ -f "$build_dir/${proj_name}.deps.json" ]; then
+            cp "$build_dir/${proj_name}.deps.json" "/out/${proj_name}.deps.json"
+        fi
+
+        echo "--- Built fuzz target: $proj_name ---"
+    done
+else
+    echo "=== Simple mode: building from source root ==="
+    cd /workspace
+    dotnet publish -c Release -o /build 2>&1 || { echo "dotnet publish failed"; exit 1; }
+
+    # Instrument all built DLLs with SharpFuzz (skip system DLLs)
+    for dll in /build/*.dll; do
+        basename=$(basename "$dll" .dll)
+        case "$basename" in
+            System.*|Microsoft.*|mscorlib|netstandard) continue ;;
+        esac
+        sharpfuzz "$dll" 2>/dev/null || true
+    done
+
+    # For each harness DLL, create a fuzz target by copying libfuzzer-dotnet
+    for dll in /build/*.dll; do
+        basename=$(basename "$dll" .dll)
+        cp /usr/local/bin/libfuzzer-dotnet "/out/$basename"
+        cp "$dll" "/out/${basename}.dll"
+        if [ -f "/build/${basename}.runtimeconfig.json" ]; then
+            cp "/build/${basename}.runtimeconfig.json" "/out/${basename}.runtimeconfig.json"
+        fi
+        if [ -f "/build/${basename}.deps.json" ]; then
+            cp "/build/${basename}.deps.json" "/out/${basename}.deps.json"
+        fi
+    done
+
+    cp /build/*.dll /out/ 2>/dev/null || true
+    cp /build/*.json /out/ 2>/dev/null || true
+fi
 
 echo "C# build complete. Fuzz targets in /out/"
 ls -la /out/
@@ -728,7 +821,7 @@ ls -la /out/
             result = subprocess.run(
                 cmd,
                 capture_output=True,
-                timeout=600,
+                timeout=1800,  # 30 min — large repos need time for NuGet restore + compile
             )
 
             # Copy build output from container
@@ -885,7 +978,7 @@ ls -la /out/
             result = subprocess.run(
                 cmd,
                 capture_output=True,
-                timeout=600,
+                timeout=1800,  # 30 min — large repos need time for NuGet restore + compile
             )
 
             if result.returncode == 0:
