@@ -76,6 +76,17 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
     && rm /tmp/dotnet-install.sh \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Node.js 20 runtime for JavaScript/TypeScript fuzzing support (Jazzer.js)
+# hadolint ignore=DL3003,DL3009
+RUN DEBIAN_FRONTEND=noninteractive apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder --chown=app:app /app/fuzzer/.venv /app/fuzzer/.venv
 COPY --from=builder --chown=app:app /app/fuzzer_runner/.venv /app/fuzzer_runner/.venv
 COPY common/container-entrypoint.sh /container-entrypoint.sh

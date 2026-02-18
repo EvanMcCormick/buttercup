@@ -345,6 +345,94 @@ QUERY_STR_CLASS_MEMBERS_CSHARP = """;; Match field declarations in classes
   )
 )"""
 
+QUERY_STR_JAVASCRIPT = """
+(function_declaration
+  name: (identifier) @function.name
+  parameters: (formal_parameters)
+  body: (statement_block) @function.body) @function.definition
+
+(method_definition
+  name: (property_identifier) @function.name
+  parameters: (formal_parameters)
+  body: (statement_block) @function.body) @function.definition
+"""
+# This query matches JavaScript/TypeScript function and method declarations:
+# 1. function_declaration - top-level and exported functions (including async)
+# 2. method_definition - methods inside classes
+# Note: arrow functions are lexical_declarations, not standalone function nodes.
+#   They are captured via their parent variable_declarator if needed.
+# Note: TypeScript uses the same node types as JavaScript for these.
+
+QUERY_STR_TYPES_JAVASCRIPT = """
+(
+[
+  (class_declaration
+    name: (type_identifier) @type.name) @type.definition
+
+  (interface_declaration
+    name: (type_identifier) @type.name) @type.definition
+
+  (type_alias_declaration
+    name: (type_identifier) @type.name) @type.definition
+
+  (enum_declaration
+    name: (identifier) @type.name) @type.definition
+]
+)
+"""
+# This query matches TypeScript/JavaScript type definitions:
+# 1. class_declaration - class definitions
+# 2. interface_declaration - TypeScript interfaces
+# 3. type_alias_declaration - TypeScript type aliases
+# 4. enum_declaration - TypeScript enums
+
+QUERY_STR_CLASS_MEMBERS_JAVASCRIPT = """;; Match field definitions in classes
+(
+  (class_declaration
+    body: (class_body
+      (public_field_definition
+        name: (property_identifier) @name
+      ) @field_declaration
+    )
+  )
+)
+
+;; Match method definitions in classes
+(
+  (class_declaration
+    body: (class_body
+      (method_definition
+        name: (property_identifier) @method_name
+        parameters: (formal_parameters) @method_params
+        body: (statement_block)? @method_body
+      ) @method_declaration
+    )
+  )
+)
+
+;; Match property signatures in interfaces
+(
+  (interface_declaration
+    body: (interface_body
+      (property_signature
+        name: (property_identifier) @method_name
+      ) @method_declaration
+    )
+  )
+)
+
+;; Match method signatures in interfaces
+(
+  (interface_declaration
+    body: (interface_body
+      (method_signature
+        name: (property_identifier) @method_name
+        parameters: (formal_parameters) @method_params
+      ) @method_declaration
+    )
+  )
+)"""
+
 QUERY_STR_CLASS_MEMBERS_JAVA = """;; Match field declarations without explicit modifiers
 (
   (class_declaration
@@ -423,6 +511,12 @@ class CodeTS:
             query_str = QUERY_STR_CSHARP
             types_query_str = QUERY_STR_TYPES_CSHARP
             query_class_members = QUERY_STR_CLASS_MEMBERS_CSHARP
+        elif self.project_yaml.unified_language == Language.JAVASCRIPT:
+            self.parser = get_parser("typescript")
+            self.language = get_language("typescript")
+            query_str = QUERY_STR_JAVASCRIPT
+            types_query_str = QUERY_STR_TYPES_JAVASCRIPT
+            query_class_members = QUERY_STR_CLASS_MEMBERS_JAVASCRIPT
         else:
             raise ValueError(f"Unsupported language: {self.project_yaml.language}")
 
@@ -608,8 +702,11 @@ class CodeTS:
                 "class_specifier",
                 "struct_declaration",
                 "record_declaration",
+                "type_alias_declaration",
             ):
                 type_def_type = TypeDefinitionType.CLASS
+            elif definition_node.type == "enum_declaration":
+                type_def_type = TypeDefinitionType.ENUM
             else:
                 logger.debug(f"Unknown type definition node type: {definition_node.type}")
                 continue  # Skip this define as it doesn't look like a type

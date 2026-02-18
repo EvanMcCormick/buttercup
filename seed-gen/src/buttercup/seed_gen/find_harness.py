@@ -156,6 +156,21 @@ def find_sharpfuzz_harnesses(codequery: CodeQuery) -> list[Path]:
     )
 
 
+def find_jazzerjs_harnesses(codequery: CodeQuery) -> list[Path]:
+    """Find Jazzer.js harnesses in the source directory.
+
+    Heuristic: JS/TS file that exports a fuzz function via module.exports.fuzz or
+    export function fuzz.
+    """
+    grep_pattern = r"(module\.exports\.fuzz\s*=|exports\.fuzz\s*=|export\s+(async\s+)?function\s+fuzz)"
+
+    return _find_source_files(
+        codequery,
+        file_patterns=["*.js", "*.ts", "*.mjs"],
+        grep_pattern=grep_pattern,
+    )
+
+
 def _rebase_path(task_dir: Path, path: Path) -> Path:
     container_src_dir = task_dir / CONTAINER_SRC_DIR
     try:
@@ -177,6 +192,8 @@ def get_harness_source_candidates(codequery: CodeQuery, harness_name: str) -> li
         harnesses = find_jazzer_harnesses(codequery)
     elif language == Language.CSHARP:
         harnesses = find_sharpfuzz_harnesses(codequery)
+    elif language == Language.JAVASCRIPT:
+        harnesses = find_jazzerjs_harnesses(codequery)
     else:
         harnesses = find_libfuzzer_harnesses(codequery)
 

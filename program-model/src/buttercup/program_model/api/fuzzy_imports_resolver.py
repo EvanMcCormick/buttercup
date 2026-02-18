@@ -318,6 +318,68 @@ class FuzzyCSharpImportsResolver:
         return path
 
 
+class FuzzyJSImportsResolver:
+    """A resolver for JavaScript/TypeScript imports in a source code folder.
+    This class can analyze 'import' and 'require' statements in files and lookup
+    module definitions to help deduplicate callee search results.
+
+    WARNING: Best-effort resolution. Doesn't handle all JS/TS module resolution edge cases.
+    """
+
+    def __init__(self, challenge: ChallengeTask, codequery: "CodeQuery"):  # type: ignore # noqa: F821
+        if challenge:
+            self.container_code_path = Path(str(challenge.workdir_from_dockerfile())[1:])
+            self.local_code_path = challenge.task_dir / "container_src_dir" / "src" / challenge.focus
+        self.codequery = codequery
+
+    def parse_imports_in_file(self, file_path: Path) -> list[str]:
+        """Parse import/require statements in a JS/TS file and return the list of imported modules.
+        Handles ES6 imports and CommonJS require().
+        """
+        import_pattern = r"""(?:import\s+(?:(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)\s+from\s+)?['"]([^'"]+)['"]|(?:const|let|var)\s+(?:\{[^}]*\}|\w+)\s*=\s*require\(\s*['"]([^'"]+)['"]\s*\))"""
+        res = []
+        try:
+            with open(self._normalize_path(file_path)) as f:
+                for line in f:
+                    matches = re.findall(import_pattern, line)
+                    for match in matches:
+                        # match is a tuple of capture groups; take whichever is non-empty
+                        module = match[0] or match[1]
+                        if module:
+                            res.append(module)
+        except OSError:
+            pass
+        return res
+
+    def filter_callees(self, caller_function: Function, callees: list[Function]) -> list[Function]:
+        """Filter callees by checking JS/TS imports. Best-effort deduplication."""
+        callee_groups = defaultdict(list)
+        for callee in callees:
+            callee_groups[callee.name].append(callee)
+
+        res = []
+        for group in callee_groups.values():
+            if len(group) <= 1:
+                res += group
+            else:
+                # For JS/TS, module resolution is complex (node_modules, path aliases, etc.).
+                # Return all candidates and let the LLM patcher sort it out.
+                res += group
+        return res
+
+    def _normalize_path(self, path: Path | str) -> Path:
+        """Normalize a path into an absolute path."""
+        if str(path).startswith("/"):
+            if not Path(path).exists():
+                path = Path(str(path)[1:])
+        path = Path(path)
+        if hasattr(self, "container_code_path") and str(path).startswith(str(self.container_code_path)):
+            path = Path(str(path)[len(str(self.container_code_path)) + 1 :])
+        if not path.is_absolute():
+            path = (self.local_code_path / path).resolve()
+        return path
+
+
 class FuzzyJavaImportsResolver:
     """A resolver for Java imports in a source code folder.
     This class can analyze import statements in files and lookup class defs to

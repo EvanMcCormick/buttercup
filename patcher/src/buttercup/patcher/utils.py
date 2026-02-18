@@ -15,7 +15,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.runnables import Runnable, RunnableConfig
 from pydantic import BaseModel
 
-VALID_PATCH_EXTENSIONS = (".c", ".h", ".in", ".java", ".cs")
+VALID_PATCH_EXTENSIONS = (".c", ".h", ".in", ".java", ".cs", ".js", ".ts", ".jsx", ".tsx")
 
 CHAIN_CALL_TYPE = Callable[[Callable, Runnable, dict[str, Any], RunnableConfig | None, Any], Any]
 

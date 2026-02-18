@@ -75,7 +75,27 @@ def is_fuzz_target_local(file_path, file_handle=None):
     # Otherwise, it is caller's responsibility.
     local_file_handle.close()
 
-  return result
+  if result:
+    return True
+
+  # Check if this is a Jazzer.js wrapper script (JavaScript/TypeScript fuzz target)
+  return _is_js_fuzz_target(file_path)
+
+
+def _is_js_fuzz_target(file_path):
+  """Check if a file is a Jazzer.js wrapper script for JavaScript/TypeScript fuzzing."""
+  try:
+    with open(file_path, 'rb') as f:
+      # Read first 4KB to check for wrapper script markers
+      header = f.read(4096)
+      if not header:
+        return False
+      # Must be a shell script that invokes Jazzer.js
+      if not header.startswith(b'#!/bin/bash') and not header.startswith(b'#!/bin/sh'):
+        return False
+      return b'jazzer' in header.lower()
+  except (OSError, UnicodeDecodeError):
+    return False
 
 
 

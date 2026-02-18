@@ -759,6 +759,161 @@ ls -la /out/
         return CommandResult(success=success, output=output)
 
     @read_write_decorator
+    def build_fuzzers_javascript(
+        self,
+        *,
+        engine: str | None = None,
+        sanitizer: str | None = None,
+    ) -> CommandResult:
+        """Build JavaScript/TypeScript fuzz targets using Jazzer.js.
+
+        Bypasses OSS-Fuzz helper.py since it doesn't support JS/TS natively.
+        Uses a Docker container with Node.js and Jazzer.js.
+        """
+        logger.info(
+            "Building JavaScript fuzzers for project %s | engine=%s | sanitizer=%s",
+            self.project_name,
+            engine,
+            sanitizer,
+        )
+
+        source_subpath = self.get_source_subpath()
+        if source_subpath is None:
+            return CommandResult(success=False, output=b"Source path not found")
+
+        source_dir = self.task_dir / source_subpath
+        build_out_dir = self.task_dir / "build" / "out" / self.project_name
+        build_out_dir.mkdir(parents=True, exist_ok=True)
+
+        container_name = f"buttercup-js-build-{uuid.uuid4().hex[:12]}"
+        docker_image = "node:20-bookworm"
+
+        # The build script:
+        # 1. Install project dependencies
+        # 2. Compile TypeScript if tsconfig.json present
+        # 3. Install Jazzer.js
+        # 4. Find fuzz harness files
+        # 5. Create wrapper scripts for each harness in /out/
+        build_script = """#!/bin/bash
+set -e
+
+# Install project dependencies
+cd /src
+if [ -f package.json ]; then
+    npm install --ignore-scripts 2>&1 || true
+fi
+
+# Compile TypeScript if present
+if [ -f tsconfig.json ]; then
+    npx tsc --outDir /build/compiled 2>&1 || true
+fi
+
+# Install Jazzer.js in /out
+mkdir -p /out/node_modules
+cd /out
+npm init -y 2>/dev/null
+npm install @jazzer.js/core 2>&1 || { echo "Jazzer.js install failed"; exit 1; }
+
+# Copy the Jazzer.js CLI entry point
+JAZZER_CLI=$(node -e "console.log(require.resolve('@jazzer.js/core/dist/cli.js'))" 2>/dev/null || echo "")
+if [ -z "$JAZZER_CLI" ]; then
+    JAZZER_CLI=$(find /out/node_modules -name "cli.js" -path "*jazzer*" | head -1)
+fi
+
+# Find fuzz harness files in source
+HARNESS_PATTERN='module\\.exports\\.fuzz\\s*=\\|exports\\.fuzz\\s*=\\|export\\s\\+.*function\\s\\+fuzz'
+HARNESSES=$(grep -rl "$HARNESS_PATTERN" /src --include="*.js" --include="*.ts" --include="*.mjs" 2>/dev/null || true)
+
+# Also check compiled output
+if [ -d /build/compiled ]; then
+    COMPILED_HARNESSES=$(grep -rl "$HARNESS_PATTERN" /build/compiled --include="*.js" 2>/dev/null || true)
+    HARNESSES="$HARNESSES $COMPILED_HARNESSES"
+fi
+
+if [ -z "$HARNESSES" ]; then
+    echo "No fuzz harnesses found"
+    exit 1
+fi
+
+# Copy source and compiled files to /out for runtime
+cp -r /src/* /out/ 2>/dev/null || true
+if [ -d /build/compiled ]; then
+    cp -r /build/compiled/* /out/ 2>/dev/null || true
+fi
+
+# Create wrapper script for each harness
+for harness in $HARNESSES; do
+    basename=$(basename "$harness")
+    name="${basename%.*}"
+
+    # Determine the target path relative to /out/
+    if echo "$harness" | grep -q "^/build/compiled"; then
+        target_js="/out/$(echo "$harness" | sed 's|^/build/compiled/||')"
+    else
+        target_js="/out/$(echo "$harness" | sed 's|^/src/||')"
+    fi
+
+    cat > "/out/$name" << WRAPPER
+#!/bin/bash
+# Jazzer.js fuzz target wrapper
+export NODE_PATH="/out/node_modules"
+exec node /out/node_modules/@jazzer.js/core/dist/cli.js \\
+  --fuzz_target="$target_js" \\
+  "\\$@"
+WRAPPER
+    chmod +x "/out/$name"
+done
+
+echo "JavaScript build complete. Fuzz targets in /out/"
+ls -la /out/
+"""
+
+        try:
+            cmd = [
+                "docker",
+                "run",
+                "--name",
+                container_name,
+                "-v",
+                f"{source_dir.absolute().as_posix()}:/src:ro",
+                docker_image,
+                "bash",
+                "-c",
+                build_script,
+            ]
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                timeout=600,
+            )
+
+            if result.returncode == 0:
+                copy_cmd = [
+                    "docker",
+                    "cp",
+                    f"{container_name}:/out/.",
+                    str(build_out_dir),
+                ]
+                subprocess.run(copy_cmd, check=True, capture_output=True)
+
+            output = result.stdout + result.stderr
+            success = result.returncode == 0
+
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            logger.error("JavaScript build failed: %s", e)
+            output = str(e).encode()
+            success = False
+        finally:
+            subprocess.run(
+                ["docker", "rm", "-f", container_name],
+                capture_output=True,
+                check=False,
+            )
+
+        return CommandResult(success=success, output=output)
+
+    @read_write_decorator
     def build_fuzzers_with_cache(
         self,
         use_source_dir: bool = True,
@@ -777,6 +932,8 @@ ls -la /out/
             project_yaml = ProjectYaml(self, self.task_meta.project_name)
             if project_yaml.unified_language == Language.CSHARP:
                 return self.build_fuzzers_csharp(engine=engine, sanitizer=sanitizer)
+            if project_yaml.unified_language == Language.JAVASCRIPT:
+                return self.build_fuzzers_javascript(engine=engine, sanitizer=sanitizer)
         except (ValueError, FileNotFoundError):
             pass  # Fall through to standard OSS-Fuzz build
 

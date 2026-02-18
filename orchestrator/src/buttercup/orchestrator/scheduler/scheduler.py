@@ -171,7 +171,8 @@ class Scheduler:
 
         # C# projects use libfuzzer-dotnet (which IS libfuzzer) and don't support ASAN/UBSAN.
         # Override sanitizers to "none" for C# since .NET has its own memory safety guarantees.
-        if project_yaml.unified_language == Language.CSHARP:
+        # JS/TS projects use Jazzer.js (which embeds libfuzzer) and don't support native sanitizers.
+        if project_yaml.unified_language in (Language.CSHARP, Language.JAVASCRIPT):
             engine = "libfuzzer"
             sanitizers = ["none"]
 

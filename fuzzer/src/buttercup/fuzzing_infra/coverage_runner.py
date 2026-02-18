@@ -368,6 +368,11 @@ class CoverageRunner:
             # Return empty list to avoid blocking the pipeline.
             logger.warning("C# coverage collection not yet implemented, skipping")
             return []
+        elif lang == Language.JAVASCRIPT:
+            # JS/TS coverage collection is not yet implemented (requires nyc/c8 integration).
+            # Return empty list to avoid blocking the pipeline.
+            logger.warning("JavaScript/TypeScript coverage collection not yet implemented, skipping")
+            return []
         else:
             logger.error(f"Unsupported language: {lang}")
             return None

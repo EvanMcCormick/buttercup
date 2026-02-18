@@ -92,6 +92,34 @@ def test_xml_external_entity() -> bytes:
 </example>
 """
 
+VULN_JAVASCRIPT_POV_EXAMPLES = r"""
+<example>
+```
+def test_prototype_pollution() -> bytes:
+    # Send JSON payload to trigger prototype pollution via unsafe merge
+    import json
+    payload = json.dumps({"__proto__": {"isAdmin": True}})
+    return payload.encode()
+```
+</example>
+<example>
+```
+def test_redos() -> bytes:
+    # Send input that triggers catastrophic backtracking in a regex
+    payload = "a" * 50 + "!"
+    return payload.encode()
+```
+</example>
+<example>
+```
+def test_code_injection() -> bytes:
+    # Send payload to trigger code injection via eval or Function constructor
+    payload = "constructor.constructor('return process.exit(1)')()"
+    return payload.encode()
+```
+</example>
+"""
+
 COMMON_CWE_LIST = """CWE-476: NULL Pointer Dereference
 CWE-400: Uncontrolled Resource Consumption"""
 
@@ -116,6 +144,16 @@ CWE-918: Server-Side Request Forgery (SSRF)
 CWE-611: Improper Restriction of XML External Entity Reference
 CWE-20: Improper Input Validation
 CWE-434: Unrestricted Upload of File with Dangerous Type"""
+
+JAVASCRIPT_CWE_LIST = """CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')
+CWE-1321: Improperly Controlled Modification of Object Prototype Attributes ('Prototype Pollution')
+CWE-94: Improper Control of Generation of Code ('Code Injection')
+CWE-400: Uncontrolled Resource Consumption ('ReDoS')
+CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')
+CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')
+CWE-918: Server-Side Request Forgery (SSRF)
+CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')
+CWE-502: Deserialization of Untrusted Data"""
 
 C_CWE_LIST = """CWE-787: Out-of-bounds Write
 CWE-125: Out-of-bounds Read

@@ -22,6 +22,7 @@ from buttercup.program_model.api.fuzzy_imports_resolver import (
     FuzzyCImportsResolver,
     FuzzyCSharpImportsResolver,
     FuzzyJavaImportsResolver,
+    FuzzyJSImportsResolver,
 )
 from buttercup.program_model.api.tree_sitter import CodeTS
 from buttercup.program_model.utils.common import (
@@ -87,6 +88,16 @@ CSHARP_EXTENSIONS = [
     "*.csx",
 ]
 
+# JavaScript/TypeScript Projects
+JAVASCRIPT_EXTENSIONS = [
+    "*.js",
+    "*.jsx",
+    "*.ts",
+    "*.tsx",
+    "*.mjs",
+    "*.cjs",
+]
+
 
 @dataclass
 class CQSearchResult:
@@ -139,7 +150,7 @@ class CodeQuery:
 
     challenge: ChallengeTask
     ts: CodeTS = field(init=False)
-    imports_resolver: FuzzyCImportsResolver | FuzzyJavaImportsResolver | FuzzyCSharpImportsResolver | None = field(init=False)
+    imports_resolver: FuzzyCImportsResolver | FuzzyJavaImportsResolver | FuzzyCSharpImportsResolver | FuzzyJSImportsResolver | None = field(init=False)
 
     CSCOPE_FILES: ClassVar[str] = "cscope.files"
     CSCOPE_OUT: ClassVar[str] = "cscope.out"
@@ -157,6 +168,8 @@ class CodeQuery:
             self.imports_resolver = FuzzyJavaImportsResolver(self.challenge, self)
         elif language == Language.CSHARP:
             self.imports_resolver = FuzzyCSharpImportsResolver(self.challenge, self)
+        elif language == Language.JAVASCRIPT:
+            self.imports_resolver = FuzzyJSImportsResolver(self.challenge, self)
         else:
             self.imports_resolver = None
 
@@ -244,6 +257,8 @@ class CodeQuery:
                 extensions = JAVA_EXTENSIONS
             elif project_yaml.unified_language == Language.CSHARP:
                 extensions = CSHARP_EXTENSIONS
+            elif project_yaml.unified_language == Language.JAVASCRIPT:
+                extensions = JAVASCRIPT_EXTENSIONS
             else:
                 raise ValueError(f"Unsupported language: {project_yaml.language}")
 
