@@ -65,6 +65,17 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
     && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 
+# Install .NET 8.0 runtime for C# fuzzing support (SharpFuzz/libfuzzer-dotnet)
+# hadolint ignore=DL3003,DL3009
+RUN DEBIAN_FRONTEND=noninteractive apt-get update \
+    && apt-get install -y --no-install-recommends wget \
+    && wget -q https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh \
+    && chmod +x /tmp/dotnet-install.sh \
+    && /tmp/dotnet-install.sh --runtime dotnet --channel 8.0 --install-dir /usr/share/dotnet \
+    && ln -s /usr/share/dotnet/dotnet /usr/local/bin/dotnet \
+    && rm /tmp/dotnet-install.sh \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder --chown=app:app /app/fuzzer/.venv /app/fuzzer/.venv
 COPY --from=builder --chown=app:app /app/fuzzer_runner/.venv /app/fuzzer_runner/.venv
 COPY common/container-entrypoint.sh /container-entrypoint.sh

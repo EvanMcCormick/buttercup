@@ -258,6 +258,93 @@ QUERY_STR_TYPES_JAVA = """
 #    - name captured with @type.name
 
 
+QUERY_STR_CSHARP = """
+(method_declaration
+  returns: (_)?
+  name: (identifier) @function.name
+  parameters: (parameter_list)
+  body: (block) @function.body) @function.definition
+"""
+# This query matches C# method declarations:
+# 1. Matches a method_declaration node
+# 2. returns: (_)? - Optional return type (any type node)
+# 3. name: (identifier) @function.name - Captures the method name
+# 4. parameters: (parameter_list) - Matches the method parameters
+# 5. body: (block) @function.body - Captures the method body
+# 6. @function.definition - Captures the entire method declaration
+# Note: modifiers (public, static, async, etc.) are child nodes, not fields
+
+QUERY_STR_TYPES_CSHARP = """
+(
+[
+  (class_declaration
+    name: (identifier) @type.name) @type.definition
+
+  (struct_declaration
+    name: (identifier) @type.name) @type.definition
+
+  (interface_declaration
+    name: (identifier) @type.name) @type.definition
+
+  (enum_declaration
+    name: (identifier) @type.name) @type.definition
+
+  (record_declaration
+    name: (identifier) @type.name) @type.definition
+]
+)
+"""
+# This query matches C# type definitions:
+# 1. class_declaration - Matches class definitions
+# 2. struct_declaration - Matches struct definitions
+# 3. interface_declaration - Matches interface definitions
+# 4. enum_declaration - Matches enum definitions
+# 5. record_declaration - Matches record definitions (C# 9+)
+
+QUERY_STR_CLASS_MEMBERS_CSHARP = """;; Match field declarations in classes
+(
+  (class_declaration
+    body: (declaration_list
+      (field_declaration
+        (variable_declaration
+          type: (_) @type
+          (variable_declarator
+            (identifier) @name
+          )
+        )
+      ) @field_declaration
+    )
+  )
+)
+
+;; Match method declarations in classes
+(
+  (class_declaration
+    body: (declaration_list
+      (method_declaration
+        returns: (_) @method_return_type
+        name: (identifier) @method_name
+        parameters: (parameter_list) @method_params
+        body: (_)? @method_body
+      ) @method_declaration
+    )
+  )
+)
+
+;; Match method declarations in interfaces
+(
+  (interface_declaration
+    body: (declaration_list
+      (method_declaration
+        returns: (_) @method_return_type
+        name: (identifier) @method_name
+        parameters: (parameter_list) @method_params
+        body: (_)? @method_body
+      ) @method_declaration
+    )
+  )
+)"""
+
 QUERY_STR_CLASS_MEMBERS_JAVA = """;; Match field declarations without explicit modifiers
 (
   (class_declaration
@@ -330,6 +417,12 @@ class CodeTS:
             query_str = QUERY_STR_JAVA
             types_query_str = QUERY_STR_TYPES_JAVA
             query_class_members = QUERY_STR_CLASS_MEMBERS_JAVA
+        elif self.project_yaml.unified_language == Language.CSHARP:
+            self.parser = get_parser("csharp")
+            self.language = get_language("csharp")
+            query_str = QUERY_STR_CSHARP
+            types_query_str = QUERY_STR_TYPES_CSHARP
+            query_class_members = QUERY_STR_CLASS_MEMBERS_CSHARP
         else:
             raise ValueError(f"Unsupported language: {self.project_yaml.language}")
 
@@ -509,10 +602,12 @@ class CodeTS:
                 type_def_type = TypeDefinitionType.PREPROC_TYPE
             elif definition_node.type == "preproc_function_def":
                 type_def_type = TypeDefinitionType.PREPROC_FUNCTION
-            elif (
-                definition_node.type == "class_declaration"
-                or definition_node.type == "interface_declaration"
-                or definition_node.type == "class_specifier"
+            elif definition_node.type in (
+                "class_declaration",
+                "interface_declaration",
+                "class_specifier",
+                "struct_declaration",
+                "record_declaration",
             ):
                 type_def_type = TypeDefinitionType.CLASS
             else:

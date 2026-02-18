@@ -17,7 +17,7 @@ from buttercup.common.datastructures.msg_pb2 import (
     WeightedHarness,
 )
 from buttercup.common.maps import BuildMap, HarnessWeights
-from buttercup.common.project_yaml import ProjectYaml
+from buttercup.common.project_yaml import Language, ProjectYaml
 from buttercup.common.queues import GroupNames, QueueFactory, QueueNames, ReliableQueue, RQItem
 from buttercup.common.task_registry import TaskRegistry
 from buttercup.common.utils import serve_loop
@@ -168,6 +168,13 @@ class Scheduler:
 
         engine = self.select_preferred(project_yaml.fuzzing_engines, ["libfuzzer", "afl"])
         sanitizers = project_yaml.sanitizers
+
+        # C# projects use libfuzzer-dotnet (which IS libfuzzer) and don't support ASAN/UBSAN.
+        # Override sanitizers to "none" for C# since .NET has its own memory safety guarantees.
+        if project_yaml.unified_language == Language.CSHARP:
+            engine = "libfuzzer"
+            sanitizers = ["none"]
+
         logger.info(f"Selected engine={engine}, sanitizers={sanitizers} for task {task.task_id}")
 
         build_types = [

@@ -260,6 +260,64 @@ class FuzzyCImportsResolver:
         return res
 
 
+class FuzzyCSharpImportsResolver:
+    """A resolver for C# imports (using directives) in a source code folder.
+    This class can analyze 'using' statements in files and lookup type definitions
+    to help deduplicate callee search results.
+
+    WARNING: Best-effort resolution. Doesn't handle all C# namespace resolution edge cases.
+    """
+
+    def __init__(self, challenge: ChallengeTask, codequery: "CodeQuery"):  # type: ignore # noqa: F821
+        if challenge:
+            self.container_code_path = Path(str(challenge.workdir_from_dockerfile())[1:])
+            self.local_code_path = challenge.task_dir / "container_src_dir" / "src" / challenge.focus
+        self.codequery = codequery
+
+    def parse_imports_in_file(self, file_path: Path) -> list[str]:
+        """Parse 'using' directives in a C# file and return the list of imported namespaces.
+        E.g. for 'using System.IO;', returns ['System.IO'].
+        """
+        using_pattern = r"using\s+(?:static\s+)?([\w.]+)\s*;"
+        res = []
+        try:
+            with open(self._normalize_path(file_path)) as f:
+                for line in f:
+                    matches = re.findall(using_pattern, line)
+                    res += matches
+        except OSError:
+            pass
+        return res
+
+    def filter_callees(self, caller_function: Function, callees: list[Function]) -> list[Function]:
+        """Filter callees by checking C# using directives. Best-effort deduplication."""
+        callee_groups = defaultdict(list)
+        for callee in callees:
+            callee_groups[callee.name].append(callee)
+
+        res = []
+        for group in callee_groups.values():
+            if len(group) <= 1:
+                res += group
+            else:
+                # For C#, we can't easily resolve namespaces without a full compilation model.
+                # Return all candidates and let the LLM patcher sort it out.
+                res += group
+        return res
+
+    def _normalize_path(self, path: Path | str) -> Path:
+        """Normalize a path into an absolute path."""
+        if str(path).startswith("/"):
+            if not Path(path).exists():
+                path = Path(str(path)[1:])
+        path = Path(path)
+        if hasattr(self, "container_code_path") and str(path).startswith(str(self.container_code_path)):
+            path = Path(str(path)[len(str(self.container_code_path)) + 1 :])
+        if not path.is_absolute():
+            path = (self.local_code_path / path).resolve()
+        return path
+
+
 class FuzzyJavaImportsResolver:
     """A resolver for Java imports in a source code folder.
     This class can analyze import statements in files and lookup class defs to

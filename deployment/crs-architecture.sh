@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -e
 
+# Add Windows tool paths for Git Bash compatibility
+export PATH="/c/Program Files/Kubernetes/Minikube:/c/Program Files/Docker/Docker/resources/bin:/c/Users/EvanMccormick/AppData/Local/Microsoft/WinGet/Links:${PATH}"
+
 ##set ANSI escaape codes
 NC='\033[0m'
 RED='\033[1;31m'
@@ -196,7 +199,7 @@ fi
 	# Create TLS certificate for registry cache
 	echo -e "${BLU}Creating TLS certificate for registry cache${NC}"
 	REGISTRY_CACHE_HOST="registry-cache.${BUTTERCUP_NAMESPACE}.svc.cluster.local"
-	openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+	MSYS_NO_PATHCONV=1 openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
 		-keyout /tmp/registry-cache.key \
 		-out /tmp/registry-cache.crt \
 		-subj "/CN=${REGISTRY_CACHE_HOST}" \

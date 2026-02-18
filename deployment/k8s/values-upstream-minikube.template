@@ -66,6 +66,15 @@ litellm:
   gemini:
     apiKey: "${GEMINI_API_KEY}"
 
+merger-bot:
+  resources:
+    limits:
+      cpu: 4000m
+      memory: 8192Mi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+
 ui:
   enabled: true
 

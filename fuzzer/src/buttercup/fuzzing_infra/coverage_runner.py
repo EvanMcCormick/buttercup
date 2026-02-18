@@ -363,6 +363,11 @@ class CoverageRunner:
             ret = self.run_c(harness_name, corpus_dir)
         elif lang == Language.JAVA:
             ret = self.run_java(harness_name, corpus_dir)
+        elif lang == Language.CSHARP:
+            # C# coverage collection is not yet implemented (requires Coverlet integration).
+            # Return empty list to avoid blocking the pipeline.
+            logger.warning("C# coverage collection not yet implemented, skipping")
+            return []
         else:
             logger.error(f"Unsupported language: {lang}")
             return None

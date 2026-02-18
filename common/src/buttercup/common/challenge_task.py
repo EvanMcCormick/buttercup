@@ -619,6 +619,146 @@ class ChallengeTask:
         return self._run_helper_cmd(cmd, env_helper=env_helper)
 
     @read_write_decorator
+    def build_fuzzers_csharp(
+        self,
+        *,
+        engine: str | None = None,
+        sanitizer: str | None = None,
+    ) -> CommandResult:
+        """Build C# fuzz targets using SharpFuzz + libfuzzer-dotnet.
+
+        Bypasses OSS-Fuzz helper.py since it doesn't support C#.
+        Uses a custom Docker container with .NET SDK and SharpFuzz tooling.
+        """
+        logger.info(
+            "Building C# fuzzers for project %s | engine=%s | sanitizer=%s",
+            self.project_name,
+            engine,
+            sanitizer,
+        )
+
+        source_subpath = self.get_source_subpath()
+        if source_subpath is None:
+            return CommandResult(success=False, output=b"Source path not found")
+
+        source_dir = self.task_dir / source_subpath
+        build_out_dir = self.task_dir / "build" / "out" / self.project_name
+        build_out_dir.mkdir(parents=True, exist_ok=True)
+
+        # Build inside a Docker container with .NET SDK + SharpFuzz
+        container_name = f"buttercup-csharp-build-{uuid.uuid4().hex[:12]}"
+        docker_image = "mcr.microsoft.com/dotnet/sdk:8.0"
+
+        # The build script:
+        # 1. Install SharpFuzz CLI tool
+        # 2. Build libfuzzer-dotnet from source
+        # 3. Build the C# project
+        # 4. Instrument assemblies with SharpFuzz
+        # 5. Copy libfuzzer-dotnet + instrumented DLLs to /out/
+        build_script = """#!/bin/bash
+set -e
+
+# Install build dependencies for libfuzzer-dotnet
+apt-get update && apt-get install -y --no-install-recommends clang git ca-certificates 2>/dev/null
+
+# Build libfuzzer-dotnet
+if [ ! -f /usr/local/bin/libfuzzer-dotnet ]; then
+    git clone --depth 1 https://github.com/Metalnem/libfuzzer-dotnet.git /tmp/libfuzzer-dotnet
+    cd /tmp/libfuzzer-dotnet
+    clang -fsanitize=fuzzer -lstdc++ libfuzzer-dotnet.cc -o /usr/local/bin/libfuzzer-dotnet
+fi
+
+# Install SharpFuzz CLI
+dotnet tool install --global SharpFuzz.CommandLine 2>/dev/null || true
+export PATH="$PATH:/root/.dotnet/tools"
+
+# Build the C# project
+cd /src
+dotnet publish -c Release -o /build 2>&1 || { echo "dotnet publish failed"; exit 1; }
+
+# Instrument all built DLLs with SharpFuzz (skip system DLLs)
+for dll in /build/*.dll; do
+    basename=$(basename "$dll" .dll)
+    # Skip common .NET system DLLs
+    case "$basename" in
+        System.*|Microsoft.*|mscorlib|netstandard) continue ;;
+    esac
+    sharpfuzz "$dll" 2>/dev/null || true
+done
+
+# For each harness DLL, create a fuzz target by copying libfuzzer-dotnet
+mkdir -p /out
+for dll in /build/*.dll; do
+    basename=$(basename "$dll" .dll)
+    # Copy libfuzzer-dotnet as the harness binary name
+    cp /usr/local/bin/libfuzzer-dotnet "/out/$basename"
+    # Copy the DLL and runtime config alongside
+    cp "$dll" "/out/${basename}.dll"
+    if [ -f "/build/${basename}.runtimeconfig.json" ]; then
+        cp "/build/${basename}.runtimeconfig.json" "/out/${basename}.runtimeconfig.json"
+    fi
+    if [ -f "/build/${basename}.deps.json" ]; then
+        cp "/build/${basename}.deps.json" "/out/${basename}.deps.json"
+    fi
+done
+
+# Copy all dependency DLLs to /out/ for runtime resolution
+cp /build/*.dll /out/ 2>/dev/null || true
+cp /build/*.json /out/ 2>/dev/null || true
+
+echo "C# build complete. Fuzz targets in /out/"
+ls -la /out/
+"""
+
+        try:
+            # Run the build in a Docker container
+            cmd = [
+                "docker",
+                "run",
+                "--name",
+                container_name,
+                "-v",
+                f"{source_dir.absolute().as_posix()}:/src:ro",
+                docker_image,
+                "bash",
+                "-c",
+                build_script,
+            ]
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                timeout=600,
+            )
+
+            # Copy build output from container
+            if result.returncode == 0:
+                copy_cmd = [
+                    "docker",
+                    "cp",
+                    f"{container_name}:/out/.",
+                    str(build_out_dir),
+                ]
+                subprocess.run(copy_cmd, check=True, capture_output=True)
+
+            output = result.stdout + result.stderr
+            success = result.returncode == 0
+
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            logger.error("C# build failed: %s", e)
+            output = str(e).encode()
+            success = False
+        finally:
+            # Clean up container
+            subprocess.run(
+                ["docker", "rm", "-f", container_name],
+                capture_output=True,
+                check=False,
+            )
+
+        return CommandResult(success=success, output=output)
+
+    @read_write_decorator
     def build_fuzzers_with_cache(
         self,
         use_source_dir: bool = True,
@@ -630,6 +770,16 @@ class ChallengeTask:
         env: dict[str, str] | None = None,
         env_helper: dict[str, str] | None = None,
     ) -> CommandResult:
+        # Check if this is a C# project — use custom build path
+        try:
+            from buttercup.common.project_yaml import Language, ProjectYaml
+
+            project_yaml = ProjectYaml(self, self.task_meta.project_name)
+            if project_yaml.unified_language == Language.CSHARP:
+                return self.build_fuzzers_csharp(engine=engine, sanitizer=sanitizer)
+        except (ValueError, FileNotFoundError):
+            pass  # Fall through to standard OSS-Fuzz build
+
         check_build_res = self.check_build(architecture=architecture, engine=engine, sanitizer=sanitizer, env=env)
         if check_build_res.success:
             logger.info("Build is up to date, skipping building fuzzers")

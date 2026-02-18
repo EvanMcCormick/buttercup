@@ -141,6 +141,21 @@ def find_jazzer_harnesses(codequery: CodeQuery) -> list[Path]:
     )
 
 
+def find_sharpfuzz_harnesses(codequery: CodeQuery) -> list[Path]:
+    """Find SharpFuzz harnesses in the source directory.
+
+    Heuristic: C# file that calls Fuzzer.LibFuzzer.Run or defines a static Fuzz method
+    accepting ReadOnlySpan<byte> or byte[].
+    """
+    grep_pattern = r"(Fuzzer\.LibFuzzer\.Run|static\s+void\s+Fuzz\s*\(\s*(ReadOnlySpan<byte>|byte\[\]))"
+
+    return _find_source_files(
+        codequery,
+        file_patterns=["*.cs"],
+        grep_pattern=grep_pattern,
+    )
+
+
 def _rebase_path(task_dir: Path, path: Path) -> Path:
     container_src_dir = task_dir / CONTAINER_SRC_DIR
     try:
@@ -160,6 +175,8 @@ def get_harness_source_candidates(codequery: CodeQuery, harness_name: str) -> li
     harnesses = []
     if language == Language.JAVA:
         harnesses = find_jazzer_harnesses(codequery)
+    elif language == Language.CSHARP:
+        harnesses = find_sharpfuzz_harnesses(codequery)
     else:
         harnesses = find_libfuzzer_harnesses(codequery)
 

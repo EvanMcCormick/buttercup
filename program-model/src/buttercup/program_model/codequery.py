@@ -20,6 +20,7 @@ from opentelemetry.trace import Status, StatusCode
 
 from buttercup.program_model.api.fuzzy_imports_resolver import (
     FuzzyCImportsResolver,
+    FuzzyCSharpImportsResolver,
     FuzzyJavaImportsResolver,
 )
 from buttercup.program_model.api.tree_sitter import CodeTS
@@ -80,6 +81,12 @@ JAVA_EXTENSIONS = [
     "*.aj",
 ]
 
+# C# Projects
+CSHARP_EXTENSIONS = [
+    "*.cs",
+    "*.csx",
+]
+
 
 @dataclass
 class CQSearchResult:
@@ -132,7 +139,7 @@ class CodeQuery:
 
     challenge: ChallengeTask
     ts: CodeTS = field(init=False)
-    imports_resolver: FuzzyCImportsResolver | FuzzyJavaImportsResolver | None = field(init=False)
+    imports_resolver: FuzzyCImportsResolver | FuzzyJavaImportsResolver | FuzzyCSharpImportsResolver | None = field(init=False)
 
     CSCOPE_FILES: ClassVar[str] = "cscope.files"
     CSCOPE_OUT: ClassVar[str] = "cscope.out"
@@ -148,6 +155,8 @@ class CodeQuery:
             self.imports_resolver = FuzzyCImportsResolver(self._get_container_src_dir())
         elif language == Language.JAVA:
             self.imports_resolver = FuzzyJavaImportsResolver(self.challenge, self)
+        elif language == Language.CSHARP:
+            self.imports_resolver = FuzzyCSharpImportsResolver(self.challenge, self)
         else:
             self.imports_resolver = None
 
@@ -233,6 +242,8 @@ class CodeQuery:
                 extensions = C_CPP_EXTENSIONS
             elif project_yaml.unified_language == Language.JAVA:
                 extensions = JAVA_EXTENSIONS
+            elif project_yaml.unified_language == Language.CSHARP:
+                extensions = CSHARP_EXTENSIONS
             else:
                 raise ValueError(f"Unsupported language: {project_yaml.language}")
 

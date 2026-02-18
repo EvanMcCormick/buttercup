@@ -63,6 +63,35 @@ def test_path_traversal() -> bytes:
 </example>
 """
 
+VULN_CSHARP_POV_EXAMPLES = r"""
+<example>
+```
+def test_sql_injection() -> bytes:
+    # Send SQL injection payload to bypass authentication
+    payload = "'; DROP TABLE users; --"
+    return payload.encode()
+```
+</example>
+<example>
+```
+def test_deserialization() -> bytes:
+    # Send malicious BinaryFormatter payload to trigger unsafe deserialization
+    import struct
+    header = b'\x00\x01\x00\x00\x00\xff\xff\xff\xff'
+    payload = header + b'\x01\x00\x00\x00' + b'A' * 256
+    return payload
+```
+</example>
+<example>
+```
+def test_xml_external_entity() -> bytes:
+    # Send XXE payload to trigger XML External Entity injection
+    xxe = '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><root>&xxe;</root>'
+    return xxe.encode()
+```
+</example>
+"""
+
 COMMON_CWE_LIST = """CWE-476: NULL Pointer Dereference
 CWE-400: Uncontrolled Resource Consumption"""
 
@@ -77,6 +106,16 @@ CWE-90: Improper Neutralization of Special Elements used in an LDAP Query ('LDAP
 CWE-470: Use of Externally-Controlled Input to Select Classes or Code ('Unsafe Reflection')
 CWE-918: Server-Side Request Forgery (SSRF)
 CWE-643: Improper Neutralization of Data within XPath Expressions ('XPath Injection')"""
+
+CSHARP_CWE_LIST = """CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')
+CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')
+CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')
+CWE-502: Deserialization of Untrusted Data
+CWE-94: Improper Control of Generation of Code ('Code Injection')
+CWE-918: Server-Side Request Forgery (SSRF)
+CWE-611: Improper Restriction of XML External Entity Reference
+CWE-20: Improper Input Validation
+CWE-434: Unrestricted Upload of File with Dangerous Type"""
 
 C_CWE_LIST = """CWE-787: Out-of-bounds Write
 CWE-125: Out-of-bounds Read

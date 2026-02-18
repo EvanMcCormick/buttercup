@@ -31,8 +31,10 @@ from pydantic import Field
 from buttercup.seed_gen.prompt.vuln_discovery import (
     C_CWE_LIST,
     COMMON_CWE_LIST,
+    CSHARP_CWE_LIST,
     JAVA_CWE_LIST,
     VULN_C_POV_EXAMPLES,
+    VULN_CSHARP_POV_EXAMPLES,
     VULN_JAVA_POV_EXAMPLES,
 )
 from buttercup.seed_gen.sandbox.sandbox import sandbox_exec_funcs
@@ -361,19 +363,27 @@ class VulnBaseTask(Task):
         """Get PoV examples for the task"""
         if self.project_yaml.unified_language == Language.JAVA:
             return VULN_JAVA_POV_EXAMPLES
+        if self.project_yaml.unified_language == Language.CSHARP:
+            return VULN_CSHARP_POV_EXAMPLES
         return VULN_C_POV_EXAMPLES
 
     def get_vuln_files(self) -> str:
         if self.project_yaml.unified_language == Language.JAVA:
             return ".java"
+        if self.project_yaml.unified_language == Language.CSHARP:
+            return ".cs"
         return ".c, .h, .cpp, or .hpp"
 
     def get_fuzzer_name(self) -> str:
         if self.project_yaml.unified_language == Language.JAVA:
             return "jazzer"
+        if self.project_yaml.unified_language == Language.CSHARP:
+            return "libfuzzer"
         return "libfuzzer"
 
     def get_cwe_list(self) -> str:
         if self.project_yaml.unified_language == Language.JAVA:
             return JAVA_CWE_LIST + "\n" + COMMON_CWE_LIST
+        if self.project_yaml.unified_language == Language.CSHARP:
+            return CSHARP_CWE_LIST + "\n" + COMMON_CWE_LIST
         return C_CWE_LIST + "\n" + COMMON_CWE_LIST

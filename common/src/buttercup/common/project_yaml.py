@@ -10,6 +10,7 @@ class Language(str, Enum):
     C = "c"
     CPP = "cpp"
     JAVA = "java"
+    CSHARP = "csharp"
 
 
 @dataclass
@@ -52,6 +53,8 @@ class ProjectYaml:
             return Language.CPP
         if self.language.lower() in ["java", "jvm"]:
             return Language.JAVA
+        if self.language.lower() in ["c#", "csharp"]:
+            return Language.CSHARP
 
         raise ValueError(f"Unsupported language: {self.language}")
 
